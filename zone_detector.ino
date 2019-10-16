@@ -12,6 +12,8 @@
 /****************** VARIABLES *********************/
 /**************************************************/
 Bounce zone_switch[ACTIVE_ZONES + 1];
+
+int relay[2];
 int oldValue[ACTIVE_ZONES + 1];
 
 byte mac[] = {  0x00, 0x08, 0xDC, 0xBE, 0xEF, 0xED };
@@ -74,6 +76,13 @@ void setup() {
     }
   #endif
 
+  // Setup relays
+  for (int counter=0, pin=2; counter<2; counter++, pin++) {
+    relay[counter] = pin;
+    pinMode(relay[counter], OUTPUT);
+    digitalWrite(relay[counter], LOW);
+  }
+
   // start the Ethernet connection:
   #ifdef DEBUG
     Serial.println("Initialize Ethernet with DHCP:");
@@ -99,6 +108,7 @@ void setup() {
   #endif
 
   client.setServer(mqtt_server, mqtt_server_port);
+  client.setCallback(callback);
   while (!client.connected()) {
     #ifdef DEBUG
       Serial.print("\nAttempting MQTT connection ... ");
@@ -124,7 +134,7 @@ void setup() {
       #ifdef DEBUG
         Serial.println("Done.");
       #endif
-
+      client.subscribe("ZoneDetector/#");
     }
     else {
       #ifdef DEBUG
@@ -166,4 +176,14 @@ void loop() {
   }
   delay(250);
   Ethernet.maintain();
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
 }
