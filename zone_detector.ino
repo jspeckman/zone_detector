@@ -21,13 +21,61 @@ byte mac[] = {  0x00, 0x08, 0xDC, 0xBE, 0xEF, 0xED };
 EthernetClient ethClient;
 PubSubClient client(ethClient);
 
-const char* mqtt_server = "172.16.20.33";
+const char* mqtt_server = "172.16.20.34";
+//DEBUG IP
+//const char* mqtt_server = "192.168.10.34";
 const int mqtt_server_port = 1883;
 
 
-void setup() {
+void mqtt_connect() {
   int connection_retry_count = 3;
   
+  while (!client.connected()) {
+    #ifdef DEBUG
+      Serial.print("\nAttempting MQTT connection ... ");
+    #endif
+    if (client.connect("ZoneDetector")) {
+      client.publish("ZoneDetector", "ONLINE");
+      #ifdef DEBUG
+        Serial.println("Connected.");
+        Serial.println("Updating topics ... ");
+      #endif
+      for (int zone=1; zone<=ACTIVE_ZONES; zone++) {
+        char zone_name[17];
+        sprintf(zone_name, "ZoneDetector/Zone %d", zone);
+        #ifdef DEBUG
+          Serial.print("Topic: ");
+          Serial.print(zone_name);
+          Serial.print(" Payload: ");
+          Serial.println(zone);
+        #endif
+        client.publish(zone_name, "active");
+        delay(250);
+      }
+      #ifdef DEBUG
+        Serial.println("Done.");
+      #endif
+      client.subscribe("ZoneDetector/Refresh");
+      client.subscribe("ZoneDetector/Relay 1");
+      client.subscribe("ZoneDetector/Relay 2");
+    }
+    else {
+      #ifdef DEBUG
+        Serial.print("failed, rc=");
+        Serial.print(client.state()); // States: http://pubsubclient.knolleary.net/api.html#state
+        if (connection_retry_count-- <= 0) {
+          Serial.println("Sucks");
+        }
+
+        Serial.println(" Retries left: " + String(connection_retry_count));
+        Serial.println(" Trying again in 5 seconds");
+      #endif
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
   #ifdef DEBUG
     Serial.begin(115200);
     Serial.println("Startup...");
@@ -109,47 +157,7 @@ void setup() {
 
   client.setServer(mqtt_server, mqtt_server_port);
   client.setCallback(callback);
-  while (!client.connected()) {
-    #ifdef DEBUG
-      Serial.print("\nAttempting MQTT connection ... ");
-    #endif
-    if (client.connect("ZoneDetector")) {
-      client.publish("ZoneDetector", "ONLINE");
-      #ifdef DEBUG
-        Serial.println("Connected.");
-        Serial.println("Updating topics ... ");
-      #endif
-      for (int zone=1; zone<=ACTIVE_ZONES; zone++) {
-        char zone_name[17];
-        sprintf(zone_name, "ZoneDetector/Zone %d", zone);
-        #ifdef DEBUG
-          Serial.print("Topic: ");
-          Serial.print(zone_name);
-          Serial.print(" Payload: ");
-          Serial.println(zone);
-        #endif
-        client.publish(zone_name, "active");
-        delay(250);
-      }
-      #ifdef DEBUG
-        Serial.println("Done.");
-      #endif
-      client.subscribe("ZoneDetector/#");
-    }
-    else {
-      #ifdef DEBUG
-        Serial.print("failed, rc=");
-        Serial.print(client.state()); // States: http://pubsubclient.knolleary.net/api.html#state
-        if (connection_retry_count-- <= 0) {
-          Serial.println("Sucks");
-        }
-
-        Serial.println(" Retries left: " + String(connection_retry_count));
-        Serial.println(" Trying again in 5 seconds");
-      #endif
-      delay(5000);
-    }
-  }
+  mqtt_connect();
 }
 
 void loop() {
@@ -173,17 +181,42 @@ void loop() {
       }
     }
     oldValue[zone] = value;
+    client.loop();
   }
   delay(250);
+  if (!client.connected()) {
+    mqtt_connect();
+  }
   Ethernet.maintain();
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+  payload[length] = '\0';
+
+  #ifdef DEBUG
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    Serial.println((char *)payload);
+   #endif
+  
+  if (strcmp(topic, "ZoneDetector/Refresh") == 0 && strcmp((char *)payload, "1") == 0) {
+    char zone_name[17];
+    for (int zone = 1; zone <= ACTIVE_ZONES; zone++) {
+      zone_switch[zone].update();
+      int value = zone_switch[zone].read();
+      sprintf(zone_name, "ZoneDetector/Zone %d", zone);
+      #ifdef DEBUG
+        Serial.print(zone_name);
+        Serial.print(" Payload: ");
+        Serial.println(value);
+      #endif
+      if (value == 1) {
+        client.publish(zone_name, "OPEN");
+      } else if (value == 0) {
+        client.publish(zone_name, "CLOSED");
+      }
+      client.loop();
+    }
   }
-  Serial.println();
 }
